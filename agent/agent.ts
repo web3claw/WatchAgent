@@ -1,12 +1,13 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { defineAgent } from "eve";
 
-const anthropic = createAnthropic({
-  baseURL: "https://token-plan-sgp.xiaomimimo.com/anthropic/v1",
-  apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
+const provider = createOpenAICompatible({
+  name: "edgefn",
+  baseURL: "https://api.edgefn.net/v1",
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 export default defineAgent({
-  model: anthropic("mimo-v2.5-pro"),
+  model: provider("GLM-5.2"),
   modelContextWindowTokens: 200000,
 });

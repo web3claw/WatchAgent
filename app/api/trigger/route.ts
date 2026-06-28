@@ -67,21 +67,36 @@ function parseJobs(text: string): Job[] {
   return jobs;
 }
 
+async function fetchJobDetail(id: string): Promise<string> {
+  try {
+    const text = await firecrawlFetch(`https://www.yuanjisong.com/job/${id}`);
+    const desc = text.match(/需求描述\s*\n*([\s\S]+?)(?:\n投递职位|\n信用行为|\n热门标签)/);
+    return desc ? desc[1].trim().substring(0, 500) : "";
+  } catch { return ""; }
+}
+
 async function analyzeJob(job: Job): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return job.description || "无描述";
   try {
-    const res = await fetch("https://token-plan-sgp.xiaomimimo.com/anthropic/v1/messages", {
+    const res = await fetch("https://api.edgefn.net/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: "mimo-v2.5-pro", max_tokens: 500,
-        messages: [{ role: "user", content: `分析以下程序员兼职项目，简洁回答（3-5行）：技术难度、适合技术栈、预算是否合理、风险提示、推荐1-5星\n\n标题：${job.title}\n价格：${job.price}\n工时：${job.duration}\n描述：${job.description}` }],
+        model: "GLM-5.2", max_tokens: 2000,
+        messages: [
+          { role: "system", content: "你是外包项目分析助手。直接输出分析，不要输出思考过程。格式：难度：xxx\n技术栈：xxx\n价格分析：xxx\n工期分析：xxx\n风险提示：xxx\n推荐：⭐⭐⭐" },
+          { role: "user", content: `标题：${job.title}\n价格：${job.price}\n工时：${job.duration}\n要求：${job.description || "无"}` },
+        ],
       }),
     });
-    const data = (await res.json()) as { content?: Array<{ text?: string }> };
-    return data.content?.[0]?.text || job.description || "无描述";
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }> };
+    return data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || job.description || "无描述";
   } catch { return job.description || "无描述"; }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 async function sendTelegram(text: string) {
@@ -91,7 +106,7 @@ async function sendTelegram(text: string) {
   const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
   });
   const data = (await res.json()) as { ok: boolean; description?: string };
   if (!data.ok) throw new Error(`Telegram error: ${data.description}`);
@@ -114,7 +129,7 @@ export async function GET() {
     for (const job of newJobs) {
       try {
         const analysis = await analyzeJob(job);
-        const msg = [`🆕 *${job.title}*`, `💰 ${job.price || "面议"} | ⏱ ${job.duration || "待定"}`, `📋 ${job.type} | 📍 ${job.location || "未知"}`, ``, analysis, ``, `🔗 ${job.url}`].join("\n");
+        const msg = [`🆕 <b>${escapeHtml(job.title)}</b>`, `💰 ${escapeHtml(job.price || "面议")} | ⏱ ${escapeHtml(job.duration || "待定")}`, `📋 ${escapeHtml(job.type)} | 📍 ${escapeHtml(job.location || "未知")}`, ``, escapeHtml(analysis), ``, `🔗 ${job.url}`].join("\n");
         await sendTelegram(msg);
         results.push({ id: job.id, title: job.title, status: "sent" });
       } catch (err) { results.push({ id: job.id, title: job.title, status: "error", error: String(err) }); }
