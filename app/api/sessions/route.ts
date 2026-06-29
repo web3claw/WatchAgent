@@ -9,10 +9,13 @@ function getRedis() {
 
 async function redisCommand(command: string, ...args: (string | number)[]) {
   const { url, token } = getRedis();
-  const res = await fetch(`${url}/${command}/${args.join("/")}`, {
+  const requestUrl = `${url}/${command}/${args.join("/")}`;
+  const res = await fetch(requestUrl, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return res.json() as Promise<{ result: string | string[] | null }>;
+  const data = await res.json() as { result?: string | string[] | null; error?: string };
+  if (data.error) throw new Error(`Redis ${command}: ${data.error}`);
+  return data;
 }
 
 async function generateTitle(firstMessage: string): Promise<string> {
@@ -47,25 +50,38 @@ interface SessionMeta {
 
 export async function GET() {
   try {
+    // First check if key exists
+    const lenResult = await redisCommand("zcard", "chat:sessions");
+    const total = typeof lenResult.result === "number" ? lenResult.result : 0;
+
     const data = await redisCommand("zrevrange", "chat:sessions", 0, -1);
-    const sessionIds: string[] = data.result
-      ? typeof data.result === "string"
-        ? JSON.parse(data.result)
-        : data.result
-      : [];
+    const rawResult = data.result;
+    let sessionIds: string[] = [];
+    if (Array.isArray(rawResult)) {
+      sessionIds = rawResult;
+    } else if (typeof rawResult === "string" && rawResult.length > 0) {
+      // Upstash returns comma-separated string
+      sessionIds = rawResult.split(",").filter(Boolean);
+    }
 
     const sessions: SessionMeta[] = [];
     for (const id of sessionIds) {
       const meta = await redisCommand("hgetall", `chat:session:${id}`);
-      if (meta.result && typeof meta.result === "object" && !Array.isArray(meta.result)) {
-        const m = meta.result as Record<string, string>;
-        sessions.push({
-          sessionId: id,
-          title: m.title || "新对话",
-          createdAt: Number(m.createdAt) || 0,
-          lastActivityAt: Number(m.lastActivityAt) || 0,
-        });
+      const result = meta.result;
+      let m: Record<string, string> = {};
+      if (Array.isArray(result)) {
+        for (let i = 0; i < result.length; i += 2) {
+          m[result[i]] = result[i + 1] || "";
+        }
+      } else if (result && typeof result === "object") {
+        m = result as Record<string, string>;
       }
+      sessions.push({
+        sessionId: id,
+        title: m.title || "新对话",
+        createdAt: Number(m.createdAt) || 0,
+        lastActivityAt: Number(m.lastActivityAt) || 0,
+      });
     }
 
     return NextResponse.json({ sessions });
