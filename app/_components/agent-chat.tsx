@@ -8,6 +8,7 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
+import { MessageResponse } from "@/components/ai-elements/message";
 import {
   PromptInput,
   type PromptInputMessage,
@@ -238,13 +239,13 @@ export function AgentChat({
                 <div key={`saved-${i}`} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
                   <div
                     className={cn(
-                      "max-w-[80%] rounded-lg px-4 py-2 text-sm whitespace-pre-wrap",
+                      "max-w-[80%] rounded-lg px-4 py-2 text-sm",
                       msg.role === "user"
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted",
                     )}
                   >
-                    {text}
+                    <MessageResponse>{text}</MessageResponse>
                   </div>
                 </div>
               );
