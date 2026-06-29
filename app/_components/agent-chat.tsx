@@ -27,6 +27,11 @@ interface StoredSession {
   streamIndex: number;
 }
 
+interface StoredMessage {
+  role: string;
+  text: string;
+}
+
 function loadSession(sessionId: string): StoredSession | null {
   try {
     const raw = localStorage.getItem(`eve-session:${sessionId}`);
@@ -49,19 +54,19 @@ function saveSession(sessionId: string, state: { sessionId?: string; continuatio
   }
 }
 
-async function saveEvents(sessionId: string, events: readonly unknown[]) {
+async function saveMessages(sessionId: string, messages: { role: string; text: string }[]) {
   try {
     await fetch(`/api/sessions/${sessionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [...events] }),
+      body: JSON.stringify({ messages }),
     });
   } catch {
     // ignore
   }
 }
 
-async function loadEvents(sessionId: string): Promise<unknown[] | null> {
+async function loadMessages(sessionId: string): Promise<StoredMessage[] | null> {
   try {
     const res = await fetch(`/api/sessions/${sessionId}`);
     const data = await res.json();
@@ -79,22 +84,8 @@ export function AgentChat({
   onSessionCreated: (sessionId: string) => void;
 }) {
   const registeredRef = useRef(false);
-  const [initialEvents, setInitialEvents] = useState<readonly unknown[]>([]);
-  const [eventsLoaded, setEventsLoaded] = useState(false);
-
-  // Load saved events from Redis when restoring a session
-  useEffect(() => {
-    if (!activeSessionId) {
-      setInitialEvents([]);
-      setEventsLoaded(true);
-      return;
-    }
-    setEventsLoaded(false);
-    loadEvents(activeSessionId).then((events) => {
-      setInitialEvents(events || []);
-      setEventsLoaded(true);
-    });
-  }, [activeSessionId]);
+  const [savedMessages, setSavedMessages] = useState<StoredMessage[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const getInitialSession = useCallback(() => {
     if (activeSessionId) {
@@ -112,7 +103,6 @@ export function AgentChat({
 
   const agent = useEveAgent({
     initialSession: getInitialSession(),
-    initialEvents: initialEvents as any,
     onSessionChange: (state) => {
       if (state.sessionId) {
         saveSession(state.sessionId, state);
@@ -121,9 +111,40 @@ export function AgentChat({
   });
 
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
-  const isEmpty = agent.data.messages.length === 0;
+  const isEmpty = agent.data.messages.length === 0 && savedMessages.length === 0;
 
-  // Auto-register session when sessionId becomes available after first message
+  // Load saved messages from Redis when restoring a session
+  useEffect(() => {
+    if (!activeSessionId) {
+      setSavedMessages([]);
+      return;
+    }
+    setLoadingHistory(true);
+    loadMessages(activeSessionId).then((msgs) => {
+      setSavedMessages(msgs || []);
+      setLoadingHistory(false);
+    });
+  }, [activeSessionId]);
+
+  // Save messages to Redis when they change (debounced)
+  useEffect(() => {
+    const sid = agent.session?.sessionId;
+    if (sid && agent.data.messages.length > 0) {
+      const msgs = agent.data.messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => {
+          const textPart = m.parts.find((p) => p.type === "text");
+          return { role: m.role, text: textPart?.type === "text" ? textPart.text : "" };
+        })
+        .filter((m) => m.text);
+      if (msgs.length > 0) {
+        const timeout = setTimeout(() => saveMessages(sid, msgs), 1000);
+        return () => clearTimeout(timeout);
+      }
+    }
+  }, [agent.data.messages, agent.session?.sessionId]);
+
+  // Auto-register session after first message
   useEffect(() => {
     const sid = agent.session?.sessionId;
     if (sid && !registeredRef.current && agent.data.messages.length > 0) {
@@ -141,31 +162,11 @@ export function AgentChat({
     }
   }, [agent.session, agent.data.messages.length]);
 
-  // Save events to Redis when they change (debounced)
-  useEffect(() => {
-    const sid = agent.session?.sessionId;
-    if (sid && agent.events.length > 0) {
-      const timeout = setTimeout(() => {
-        saveEvents(sid, agent.events);
-      }, 1000);
-      return () => clearTimeout(timeout);
-    }
-  }, [agent.events, agent.session?.sessionId]);
-
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text || isBusy) return;
     await agent.send({ message: text });
   };
-
-  // Don't render until events are loaded for restored sessions
-  if (activeSessionId && !eventsLoaded) {
-    return (
-      <main className="flex h-full flex-col items-center justify-center bg-background text-foreground">
-        <div className="text-muted-foreground text-sm">加载会话中...</div>
-      </main>
-    );
-  }
 
   const composer = (
     <PromptInput onSubmit={handleSubmit}>
@@ -173,6 +174,15 @@ export function AgentChat({
       <PromptInputSubmit onStop={agent.stop} status={agent.status} />
     </PromptInput>
   );
+
+  // Show loading state
+  if (loadingHistory) {
+    return (
+      <main className="flex h-full flex-col items-center justify-center bg-background text-foreground">
+        <div className="text-muted-foreground text-sm">加载会话中...</div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex h-full flex-col overflow-hidden bg-background text-foreground">
@@ -200,6 +210,22 @@ export function AgentChat({
       {isEmpty ? null : (
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
+            {/* Show saved history messages */}
+            {savedMessages.map((msg, i) => (
+              <div key={`saved-${i}`} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
+                <div
+                  className={cn(
+                    "max-w-[80%] rounded-lg px-4 py-2 text-sm",
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted",
+                  )}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))}
+            {/* Show live messages */}
             {agent.data.messages.map((message, index) => (
               <AgentMessage
                 canRespond={!isBusy}
