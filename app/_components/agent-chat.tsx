@@ -51,7 +51,6 @@ export function AgentChat({
   onSessionCreated: (sessionId: string) => void;
 }) {
   const registeredRef = useRef(false);
-  const currentSessionIdRef = useRef<string | null>(null);
 
   const getInitialSession = useCallback(() => {
     if (activeSessionId) {
@@ -71,7 +70,6 @@ export function AgentChat({
     initialSession: getInitialSession(),
     onSessionChange: (state) => {
       if (state.sessionId) {
-        currentSessionIdRef.current = state.sessionId;
         saveSession(state.sessionId, state);
       }
     },
@@ -80,30 +78,32 @@ export function AgentChat({
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
 
+  // Auto-register session when sessionId becomes available after first message
+  useEffect(() => {
+    const sid = agent.session?.sessionId;
+    if (sid && !registeredRef.current && agent.data.messages.length > 0) {
+      registeredRef.current = true;
+      const firstUserMsg = agent.data.messages.find((m) => m.role === "user");
+      const text = firstUserMsg?.parts?.[0]?.type === "text" ? firstUserMsg.parts[0].text : "";
+      console.log("[eve] auto-registering session:", sid, "firstMessage:", text);
+      fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid, firstMessage: text }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          console.log("[eve] session registered:", data);
+          onSessionCreated(sid);
+        })
+        .catch((err) => console.error("[eve] registration failed:", err));
+    }
+  }, [agent.session, agent.data.messages.length]);
+
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text || isBusy) return;
-
     await agent.send({ message: text });
-
-    // Use ref to get the session ID that was set by onSessionChange during send()
-    const sessionId = currentSessionIdRef.current;
-    if (!registeredRef.current && sessionId) {
-      registeredRef.current = true;
-      try {
-        await fetch("/api/sessions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            firstMessage: text,
-          }),
-        });
-        onSessionCreated(sessionId);
-      } catch {
-        // ignore
-      }
-    }
   };
 
   const composer = (
