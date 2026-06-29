@@ -133,16 +133,28 @@ export function AgentChat({
   useEffect(() => {
     const sid = agent.session?.sessionId;
     if (sid && agent.data.messages.length > 0 && !isBusy) {
-      const msgs = agent.data.messages
+      const currentMsgs = agent.data.messages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .map((m) => ({
           role: m.role,
           parts: m.parts.map((p) => ({ type: p.type, text: p.type === "text" ? p.text : "" })),
         }));
-      const timeout = setTimeout(() => saveMessages(sid, msgs), 500);
+      // Merge: keep old history + append new messages (deduplicate by text content)
+      const existingTexts = new Set(savedMessages.map((m) => {
+        const t = m.parts
+          ? m.parts.filter((p) => p.type === "text").map((p) => p.text).join("")
+          : (m as any).text || "";
+        return t;
+      }));
+      const newMsgs = currentMsgs.filter((m) => {
+        const text = m.parts.filter((p) => p.type === "text").map((p) => p.text).join("");
+        return !existingTexts.has(text);
+      });
+      const allMsgs = [...savedMessages, ...newMsgs] as { role: string; parts: { type: string; text: string }[] }[];
+      const timeout = setTimeout(() => saveMessages(sid, allMsgs), 500);
       return () => clearTimeout(timeout);
     }
-  }, [agent.data.messages, agent.session?.sessionId, isBusy]);
+  }, [agent.data.messages, agent.session?.sessionId, isBusy, savedMessages]);
 
   // Auto-register session after first message
   useEffect(() => {
