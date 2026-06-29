@@ -29,7 +29,7 @@ interface StoredSession {
 
 interface StoredMessage {
   role: string;
-  text: string;
+  parts: { type: string; text: string }[];
 }
 
 function loadSession(sessionId: string): StoredSession | null {
@@ -54,7 +54,7 @@ function saveSession(sessionId: string, state: { sessionId?: string; continuatio
   }
 }
 
-async function saveMessages(sessionId: string, messages: { role: string; text: string }[]) {
+async function saveMessages(sessionId: string, messages: { role: string; parts: { type: string; text: string }[] }[]) {
   try {
     await fetch(`/api/sessions/${sessionId}`, {
       method: "PATCH",
@@ -126,23 +126,20 @@ export function AgentChat({
     });
   }, [activeSessionId]);
 
-  // Save messages to Redis when they change (debounced)
+  // Save all messages to Redis after streaming completes
   useEffect(() => {
     const sid = agent.session?.sessionId;
-    if (sid && agent.data.messages.length > 0) {
+    if (sid && agent.data.messages.length > 0 && !isBusy) {
       const msgs = agent.data.messages
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => {
-          const textPart = m.parts.find((p) => p.type === "text");
-          return { role: m.role, text: textPart?.type === "text" ? textPart.text : "" };
-        })
-        .filter((m) => m.text);
-      if (msgs.length > 0) {
-        const timeout = setTimeout(() => saveMessages(sid, msgs), 1000);
-        return () => clearTimeout(timeout);
-      }
+        .map((m) => ({
+          role: m.role,
+          parts: m.parts.map((p) => ({ type: p.type, text: p.type === "text" ? p.text : "" })),
+        }));
+      const timeout = setTimeout(() => saveMessages(sid, msgs), 500);
+      return () => clearTimeout(timeout);
     }
-  }, [agent.data.messages, agent.session?.sessionId]);
+  }, [agent.data.messages, agent.session?.sessionId, isBusy]);
 
   // Auto-register session after first message
   useEffect(() => {
@@ -211,20 +208,24 @@ export function AgentChat({
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
             {/* Show saved history messages */}
-            {savedMessages.map((msg, i) => (
-              <div key={`saved-${i}`} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
-                <div
-                  className={cn(
-                    "max-w-[80%] rounded-lg px-4 py-2 text-sm",
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted",
-                  )}
-                >
-                  {msg.text}
+            {savedMessages.map((msg, i) => {
+              const text = msg.parts?.filter((p) => p.type === "text").map((p) => p.text).join("") || "";
+              if (!text) return null;
+              return (
+                <div key={`saved-${i}`} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
+                  <div
+                    className={cn(
+                      "max-w-[80%] rounded-lg px-4 py-2 text-sm whitespace-pre-wrap",
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted",
+                    )}
+                  >
+                    {text}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {/* Show live messages */}
             {agent.data.messages.map((message, index) => (
               <AgentMessage
