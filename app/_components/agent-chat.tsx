@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef } from "react";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
 import {
@@ -20,27 +21,111 @@ const AGENT_NAME = "watchagent";
 
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
 
-export function AgentChat() {
-  const agent = useEveAgent();
+interface StoredSession {
+  sessionId: string;
+  continuationToken: string;
+  streamIndex: number;
+}
+
+function loadSession(sessionId: string): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(`eve-session:${sessionId}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(sessionId: string, state: { sessionId?: string; continuationToken?: string; streamIndex: number }) {
+  if (state.sessionId && state.continuationToken) {
+    localStorage.setItem(
+      `eve-session:${state.sessionId}`,
+      JSON.stringify({
+        sessionId: state.sessionId,
+        continuationToken: state.continuationToken,
+        streamIndex: state.streamIndex,
+      }),
+    );
+  }
+}
+
+function removeSession(sessionId: string) {
+  localStorage.removeItem(`eve-session:${sessionId}`);
+}
+
+export function AgentChat({
+  activeSessionId,
+  onSessionCreated,
+}: {
+  activeSessionId: string | null;
+  onSessionCreated: (sessionId: string) => void;
+}) {
+  const restoredRef = useRef(false);
+  const registeredRef = useRef(false);
+
+  const getInitialSession = useCallback(() => {
+    if (activeSessionId) {
+      const stored = loadSession(activeSessionId);
+      if (stored) {
+        return {
+          sessionId: stored.sessionId,
+          continuationToken: stored.continuationToken,
+          streamIndex: stored.streamIndex,
+        };
+      }
+    }
+    return undefined;
+  }, [activeSessionId]);
+
+  const agent = useEveAgent({
+    initialSession: getInitialSession(),
+  });
+
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
 
+  // Save session state whenever it changes
+  useEffect(() => {
+    if (agent.session.sessionId && agent.session.continuationToken) {
+      saveSession(agent.session.sessionId, agent.session);
+    }
+  }, [agent.session]);
+
+  // Register session in Redis when first message is sent
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text || isBusy) return;
 
     await agent.send({ message: text });
+
+    // Register in Redis after first message (if new session)
+    if (!registeredRef.current && agent.session.sessionId) {
+      registeredRef.current = true;
+      try {
+        await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: agent.session.sessionId,
+            firstMessage: text,
+          }),
+        });
+        onSessionCreated(agent.session.sessionId);
+      } catch {
+        // ignore
+      }
+    }
   };
 
   const composer = (
     <PromptInput onSubmit={handleSubmit}>
-      <PromptInputTextarea placeholder="Send a message…" />
+      <PromptInputTextarea placeholder="发送消息…" />
       <PromptInputSubmit onStop={agent.stop} status={agent.status} />
     </PromptInput>
   );
 
   return (
-    <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
+    <main className="flex h-full flex-col overflow-hidden bg-background text-foreground">
       {isEmpty ? null : (
         <header className="flex h-14 shrink-0 items-center justify-center gap-3 pl-4 pr-2">
           <span className="flex min-w-0 items-center gap-2">
@@ -55,7 +140,7 @@ export function AgentChat() {
           <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm">
             <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
             <div>
-              <p className="font-medium">Request failed</p>
+              <p className="font-medium">请求失败</p>
               <p className="mt-0.5 text-muted-foreground">{agent.error.message}</p>
             </div>
           </div>
