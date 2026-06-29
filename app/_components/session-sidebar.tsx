@@ -6,21 +6,13 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { PlusIcon, MoreHorizontalIcon, TrashIcon, MessageSquareIcon } from "lucide-react";
+import { PlusIcon, TrashIcon, MessageSquareIcon } from "lucide-react";
 
 interface Session {
   sessionId: string;
@@ -106,7 +98,7 @@ export function SessionSidebar({
             ) : (
               <SidebarMenu>
                 {sessions.map((session) => (
-                  <SidebarMenuItem key={session.sessionId}>
+                  <SidebarMenuItem key={session.sessionId} className="group">
                     <SidebarMenuButton
                       isActive={session.sessionId === activeSessionId}
                       onClick={() => onSessionSelect(session.sessionId)}
@@ -119,27 +111,14 @@ export function SessionSidebar({
                           {formatTime(session.lastActivityAt || session.createdAt)}
                         </div>
                       </div>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className="shrink-0 opacity-0 group-hover/MenuItem:opacity-100"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <MoreHorizontalIcon className="size-3" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            className="text-destructive"
-                            onClick={(e) => handleDelete(e, session.sessionId)}
-                          >
-                            <TrashIcon className="size-4 mr-2" />
-                            删除
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => handleDelete(e, session.sessionId)}
+                      >
+                        <TrashIcon className="size-3" />
+                      </Button>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}

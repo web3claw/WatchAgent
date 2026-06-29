@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
 import {
@@ -21,7 +21,13 @@ const AGENT_NAME = "watchagent";
 
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
 
-function loadSession(sessionId: string) {
+interface StoredSession {
+  sessionId: string;
+  continuationToken: string;
+  streamIndex: number;
+}
+
+function loadSession(sessionId: string): StoredSession | null {
   try {
     const raw = localStorage.getItem(`eve-session:${sessionId}`);
     return raw ? JSON.parse(raw) : null;
@@ -43,6 +49,28 @@ function saveSession(sessionId: string, state: { sessionId?: string; continuatio
   }
 }
 
+async function saveMessages(sessionId: string, messages: unknown[]) {
+  try {
+    await fetch(`/api/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
+async function loadMessages(sessionId: string): Promise<unknown[] | null> {
+  try {
+    const res = await fetch(`/api/sessions/${sessionId}`);
+    const data = await res.json();
+    return data.messages || null;
+  } catch {
+    return null;
+  }
+}
+
 export function AgentChat({
   activeSessionId,
   onSessionCreated,
@@ -51,6 +79,7 @@ export function AgentChat({
   onSessionCreated: (sessionId: string) => void;
 }) {
   const registeredRef = useRef(false);
+  const savedMessagesRef = useRef(false);
 
   const getInitialSession = useCallback(() => {
     if (activeSessionId) {
@@ -85,20 +114,27 @@ export function AgentChat({
       registeredRef.current = true;
       const firstUserMsg = agent.data.messages.find((m) => m.role === "user");
       const text = firstUserMsg?.parts?.[0]?.type === "text" ? firstUserMsg.parts[0].text : "";
-      console.log("[eve] auto-registering session:", sid, "firstMessage:", text);
       fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: sid, firstMessage: text }),
       })
         .then((res) => res.json())
-        .then((data) => {
-          console.log("[eve] session registered:", data);
-          onSessionCreated(sid);
-        })
-        .catch((err) => console.error("[eve] registration failed:", err));
+        .then(() => onSessionCreated(sid))
+        .catch(() => {});
     }
   }, [agent.session, agent.data.messages.length]);
+
+  // Save messages to Redis when they change (debounced)
+  useEffect(() => {
+    const sid = agent.session?.sessionId;
+    if (sid && agent.data.messages.length > 0) {
+      const timeout = setTimeout(() => {
+        saveMessages(sid, [...agent.data.messages]);
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [agent.data.messages, agent.session?.sessionId]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
