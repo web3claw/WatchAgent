@@ -40,7 +40,7 @@ async function fetchJobDetail(id: string): Promise<string> {
 }
 
 async function fetchJobs(): Promise<Job[]> {
-  const res = await fetch("https://task.huzhan.com/order/time/page/1", {
+  const res = await fetch("https://task.huzhan.com/order/time", {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
   });
   if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
@@ -109,10 +109,9 @@ export async function GET() {
     const jobs = await fetchJobs();
     if (jobs.length === 0) return NextResponse.json({ ok: false, error: "No jobs parsed" }, { status: 502 });
 
-    const seenData = await redisCommand("get", "huzhan:seen_jobs");
-    const seenIds: string[] = seenData.result ? typeof seenData.result === "string" ? JSON.parse(seenData.result) : seenData.result : [];
-    const newJobs = jobs.filter((j) => !seenIds.includes(j.id));
-    await redisCommand("set", "huzhan:seen_jobs", JSON.stringify(jobs.map((j) => j.id)));
+    const seenData = await redisCommand("get", "huzhan:latest_id");
+    const latestId = seenData.result ? Number(seenData.result) : 0;
+    const newJobs = jobs.filter((j) => Number(j.id) > latestId);
 
     if (newJobs.length === 0) return NextResponse.json({ ok: true, message: "No new jobs", totalJobs: jobs.length, newJobs: 0 });
 
@@ -122,6 +121,7 @@ export async function GET() {
     }
 
     const results = [];
+    const succeededIds = new Set<number>();
     for (const job of newJobs) {
       try {
         const analysis = await analyzeJob(job);
@@ -129,8 +129,23 @@ export async function GET() {
         const msg = [`🆕 <b>${escapeHtml(job.title)}</b>`, `💰 ${escapeHtml(job.price)}`, desc, ``, escapeHtml(analysis), ``, `🔗 ${job.url}`].join("\n");
         await sendTelegram(msg);
         results.push({ id: job.id, title: job.title, status: "sent" });
+        succeededIds.add(Number(job.id));
       } catch (err) { results.push({ id: job.id, title: job.title, status: "error", error: String(err) }); }
     }
+
+    // 升序处理，遇到第一个失败就停，存失败ID-1（失败的和更高的下次重试）
+    let newLatestId = latestId;
+    for (const job of newJobs.sort((a, b) => Number(a.id) - Number(b.id))) {
+      if (!succeededIds.has(Number(job.id))) {
+        newLatestId = Number(job.id) - 1;
+        break;
+      }
+    }
+    // 全部成功时更新到最后一个
+    if (newLatestId === latestId && newJobs.every((j) => succeededIds.has(Number(j.id)))) {
+      newLatestId = Number(newJobs[newJobs.length - 1].id);
+    }
+    await redisCommand("set", "huzhan:latest_id", String(newLatestId));
     return NextResponse.json({ ok: true, totalJobs: jobs.length, newJobs: newJobs.length, results });
   } catch (err) { return NextResponse.json({ ok: false, error: String(err) }, { status: 500 }); }
 }
