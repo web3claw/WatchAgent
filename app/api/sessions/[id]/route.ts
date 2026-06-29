@@ -7,8 +7,24 @@ function getRedis() {
   return { url, token };
 }
 
+const WRITE_COMMANDS = new Set(["set", "del", "zadd", "zrem", "hset"]);
+
 async function redisCommand(command: string, ...args: (string | number)[]) {
   const { url, token } = getRedis();
+  if (WRITE_COMMANDS.has(command)) {
+    const body = [command, ...args.map(String)];
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json() as { result?: string | string[] | null; error?: string };
+    if (data.error) throw new Error(`Redis ${command}: ${data.error}`);
+    return data;
+  }
   const path = `${url}/${command}/${args.join("/")}`;
   const res = await fetch(path, {
     headers: { Authorization: `Bearer ${token}` },
