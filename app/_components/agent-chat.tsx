@@ -29,7 +29,8 @@ interface StoredSession {
 
 interface StoredMessage {
   role: string;
-  parts: { type: string; text: string }[];
+  text?: string;
+  parts?: { type: string; text: string }[];
 }
 
 function loadSession(sessionId: string): StoredSession | null {
@@ -209,7 +210,10 @@ export function AgentChat({
           <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6 sm:px-6">
             {/* Show saved history messages */}
             {savedMessages.map((msg, i) => {
-              const text = msg.parts?.filter((p) => p.type === "text").map((p) => p.text).join("") || "";
+              // Support both old {role, text} and new {role, parts} formats
+              const text = msg.parts
+                ? msg.parts.filter((p) => p.type === "text").map((p) => p.text).join("")
+                : (msg as any).text || "";
               if (!text) return null;
               return (
                 <div key={`saved-${i}`} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
