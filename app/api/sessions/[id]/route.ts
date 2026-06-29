@@ -9,9 +9,15 @@ function getRedis() {
 
 async function redisCommand(command: string, ...args: (string | number)[]) {
   const { url, token } = getRedis();
-  const requestUrl = `${url}/${command}/${args.join("/")}`;
-  const res = await fetch(requestUrl, {
-    headers: { Authorization: `Bearer ${token}` },
+  // Use POST body for large payloads (Upstash REST API)
+  const body = args.map(String);
+  const res = await fetch(`${url}/${command}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
   const data = await res.json() as { result?: string | string[] | null; error?: string };
   if (data.error) throw new Error(`Redis ${command}: ${data.error}`);
@@ -39,16 +45,18 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { messages } = body as { messages?: unknown[] };
+    const { messages, title } = body as { messages?: unknown[]; title?: string };
 
-    if (!messages) {
-      return NextResponse.json({ error: "messages required" }, { status: 400 });
+    if (messages) {
+      await redisCommand("set", `chat:messages:${id}`, JSON.stringify(messages));
     }
 
-    await redisCommand("set", `chat:messages:${id}`, JSON.stringify(messages));
-    // Update lastActivityAt
+    const updates: string[] = ["lastActivityAt", String(Date.now())];
+    if (title) {
+      updates.push("title", title);
+    }
     await redisCommand("zadd", "chat:sessions", Date.now(), id);
-    await redisCommand("hset", `chat:session:${id}`, "lastActivityAt", String(Date.now()));
+    await redisCommand("hset", `chat:session:${id}`, ...updates);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -9,19 +9,27 @@ function getRedis() {
 
 async function redisCommand(command: string, ...args: (string | number)[]) {
   const { url, token } = getRedis();
-  const requestUrl = `${url}/${command}/${args.join("/")}`;
-  const res = await fetch(requestUrl, {
-    headers: { Authorization: `Bearer ${token}` },
+  const body = args.map(String);
+  const res = await fetch(`${url}/${command}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
   });
   const data = await res.json() as { result?: string | string[] | null; error?: string };
   if (data.error) throw new Error(`Redis ${command}: ${data.error}`);
   return data;
 }
 
-async function generateTitle(firstMessage: string): Promise<string> {
+async function generateTitle(firstMessage: string, responseMessage?: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return firstMessage.substring(0, 30);
   try {
+    const context = responseMessage
+      ? `用户问：${firstMessage}\n助手答：${responseMessage}`
+      : firstMessage;
     const res = await fetch("https://api.edgefn.net/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -29,8 +37,8 @@ async function generateTitle(firstMessage: string): Promise<string> {
         model: "GLM-5.2",
         max_tokens: 50,
         messages: [
-          { role: "system", content: "用10个字以内概括用户的第一条消息作为对话标题，只输出标题，不要加引号或标点。" },
-          { role: "user", content: firstMessage },
+          { role: "system", content: "根据对话内容生成一个简短标题，10个字以内，只输出标题，不要加引号或标点。" },
+          { role: "user", content: context },
         ],
       }),
     });
@@ -93,13 +101,17 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { sessionId, firstMessage } = body as { sessionId?: string; firstMessage?: string };
+    const { sessionId, firstMessage, responseMessage } = body as {
+      sessionId?: string;
+      firstMessage?: string;
+      responseMessage?: string;
+    };
 
     if (!sessionId) {
       return NextResponse.json({ error: "sessionId required" }, { status: 400 });
     }
 
-    const title = firstMessage ? await generateTitle(firstMessage) : "新对话";
+    const title = firstMessage ? await generateTitle(firstMessage, responseMessage) : "新对话";
     const now = Date.now();
 
     await redisCommand("zadd", "chat:sessions", now, sessionId);

@@ -85,6 +85,7 @@ export function AgentChat({
   onSessionCreated: (sessionId: string) => void;
 }) {
   const registeredRef = useRef(false);
+  const titleGeneratedRef = useRef(false);
   const [savedMessages, setSavedMessages] = useState<StoredMessage[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
@@ -159,6 +160,24 @@ export function AgentChat({
         .catch(() => {});
     }
   }, [agent.session, agent.data.messages.length]);
+
+  // Generate title after first round completes
+  useEffect(() => {
+    const sid = agent.session?.sessionId;
+    const userMsgs = agent.data.messages.filter((m) => m.role === "user");
+    const assistantMsgs = agent.data.messages.filter((m) => m.role === "assistant");
+    if (sid && !titleGeneratedRef.current && userMsgs.length > 0 && assistantMsgs.length > 0 && !isBusy) {
+      titleGeneratedRef.current = true;
+      const userText = userMsgs[0]?.parts?.[0]?.type === "text" ? userMsgs[0].parts[0].text : "";
+      const assistantText = assistantMsgs[0]?.parts?.find((p) => p.type === "text")?.text || "";
+      // Re-register with full context to update title
+      fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid, firstMessage: userText, responseMessage: assistantText }),
+      }).catch(() => {});
+    }
+  }, [agent.data.messages, agent.session?.sessionId, isBusy]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();

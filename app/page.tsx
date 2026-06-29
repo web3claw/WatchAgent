@@ -6,13 +6,7 @@ import { SessionSidebar } from "./_components/session-sidebar";
 import { AgentChat } from "./_components/agent-chat";
 
 export default function Page() {
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem("eve-active-session");
-    } catch {
-      return null;
-    }
-  });
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   const [chatKey, setChatKey] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
