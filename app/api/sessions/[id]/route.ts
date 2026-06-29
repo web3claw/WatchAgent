@@ -9,15 +9,9 @@ function getRedis() {
 
 async function redisCommand(command: string, ...args: (string | number)[]) {
   const { url, token } = getRedis();
-  // Use POST body for large payloads (Upstash REST API)
-  const body = args.map(String);
-  const res = await fetch(`${url}/${command}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+  const path = `${url}/${command}/${args.join("/")}`;
+  const res = await fetch(path, {
+    headers: { Authorization: `Bearer ${token}` },
   });
   const data = await res.json() as { result?: string | string[] | null; error?: string };
   if (data.error) throw new Error(`Redis ${command}: ${data.error}`);
