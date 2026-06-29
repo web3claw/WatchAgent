@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
 import {
@@ -21,13 +21,7 @@ const AGENT_NAME = "watchagent";
 
 type AgentStatus = ReturnType<typeof useEveAgent>["status"];
 
-interface StoredSession {
-  sessionId: string;
-  continuationToken: string;
-  streamIndex: number;
-}
-
-function loadSession(sessionId: string): StoredSession | null {
+function loadSession(sessionId: string) {
   try {
     const raw = localStorage.getItem(`eve-session:${sessionId}`);
     return raw ? JSON.parse(raw) : null;
@@ -49,10 +43,6 @@ function saveSession(sessionId: string, state: { sessionId?: string; continuatio
   }
 }
 
-function removeSession(sessionId: string) {
-  localStorage.removeItem(`eve-session:${sessionId}`);
-}
-
 export function AgentChat({
   activeSessionId,
   onSessionCreated,
@@ -60,8 +50,8 @@ export function AgentChat({
   activeSessionId: string | null;
   onSessionCreated: (sessionId: string) => void;
 }) {
-  const restoredRef = useRef(false);
   const registeredRef = useRef(false);
+  const currentSessionIdRef = useRef<string | null>(null);
 
   const getInitialSession = useCallback(() => {
     if (activeSessionId) {
@@ -79,38 +69,37 @@ export function AgentChat({
 
   const agent = useEveAgent({
     initialSession: getInitialSession(),
+    onSessionChange: (state) => {
+      if (state.sessionId) {
+        currentSessionIdRef.current = state.sessionId;
+        saveSession(state.sessionId, state);
+      }
+    },
   });
 
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
 
-  // Save session state whenever it changes
-  useEffect(() => {
-    if (agent.session.sessionId && agent.session.continuationToken) {
-      saveSession(agent.session.sessionId, agent.session);
-    }
-  }, [agent.session]);
-
-  // Register session in Redis when first message is sent
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text || isBusy) return;
 
     await agent.send({ message: text });
 
-    // Register in Redis after first message (if new session)
-    if (!registeredRef.current && agent.session.sessionId) {
+    // Use ref to get the session ID that was set by onSessionChange during send()
+    const sessionId = currentSessionIdRef.current;
+    if (!registeredRef.current && sessionId) {
       registeredRef.current = true;
       try {
         await fetch("/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            sessionId: agent.session.sessionId,
+            sessionId,
             firstMessage: text,
           }),
         });
-        onSessionCreated(agent.session.sessionId);
+        onSessionCreated(sessionId);
       } catch {
         // ignore
       }

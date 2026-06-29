@@ -46,11 +46,13 @@ function formatTime(ts: number): string {
 
 export function SessionSidebar({
   activeSessionId,
+  refreshKey,
   onSessionSelect,
   onNewSession,
   onDeleteSession,
 }: {
   activeSessionId: string | null;
+  refreshKey: number;
   onSessionSelect: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
@@ -72,7 +74,7 @@ export function SessionSidebar({
 
   useEffect(() => {
     fetchSessions();
-  }, []);
+  }, [refreshKey]);
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();

@@ -15,6 +15,7 @@ export default function Page() {
   });
 
   const [chatKey, setChatKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const handleSessionSelect = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
@@ -38,6 +39,7 @@ export default function Page() {
 
   const handleSessionCreated = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId);
+    setRefreshKey((k) => k + 1);
     try {
       localStorage.setItem("eve-active-session", sessionId);
     } catch {
@@ -52,6 +54,7 @@ export default function Page() {
       } catch {
         // ignore
       }
+      setRefreshKey((k) => k + 1);
       if (sessionId === activeSessionId) {
         handleNewSession();
       }
@@ -63,6 +66,7 @@ export default function Page() {
     <SidebarProvider>
       <SessionSidebar
         activeSessionId={activeSessionId}
+        refreshKey={refreshKey}
         onSessionSelect={handleSessionSelect}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
