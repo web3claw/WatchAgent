@@ -20,47 +20,33 @@ async function redisCommand(command: string, ...args: (string | number)[]) {
 
 export default defineTool({
   description:
-    "Manage the seen jobs list in Redis. Actions: 'get' returns all seen job IDs, 'add' appends new IDs, 'set' replaces the entire list, 'clear' removes all.",
+    "Manage the latest seen job ID in Redis. Actions: 'get' returns the latest ID, 'set' updates it, 'clear' removes it.",
   inputSchema: z.object({
-    action: z.enum(["get", "add", "set", "clear"]),
-    jobIds: z
-      .array(z.string())
+    platform: z.enum(["yuanjisong", "r5"]).describe("Platform to manage"),
+    action: z.enum(["get", "set", "clear"]),
+    latestId: z
+      .number()
       .optional()
-      .describe("Job IDs to add or set (required for add/set actions)"),
+      .describe("Latest job ID to set (required for set action)"),
   }),
-  async execute({ action, jobIds }) {
-    const key = "yuanjisong:seen_jobs";
+  async execute({ platform, action, latestId }) {
+    const key = `${platform}:latest_id`;
 
     switch (action) {
       case "get": {
         const data = await redisCommand("get", key);
-        if (!data.result) return { jobIds: [] };
-        const ids = typeof data.result === "string" ? JSON.parse(data.result) : data.result;
-        return { jobIds: ids };
-      }
-
-      case "add": {
-        if (!jobIds?.length) return { error: "jobIds required for add action" };
-        const existing = await redisCommand("get", key);
-        const current: string[] = existing.result
-          ? typeof existing.result === "string"
-            ? JSON.parse(existing.result)
-            : existing.result
-          : [];
-        const merged = [...new Set([...current, ...jobIds])];
-        await redisCommand("set", key, JSON.stringify(merged));
-        return { jobIds: merged, added: jobIds.length };
+        return { latestId: data.result ? Number(data.result) : 0 };
       }
 
       case "set": {
-        if (!jobIds) return { error: "jobIds required for set action" };
-        await redisCommand("set", key, JSON.stringify(jobIds));
-        return { jobIds, total: jobIds.length };
+        if (latestId === undefined) return { error: "latestId required for set action" };
+        await redisCommand("set", key, String(latestId));
+        return { latestId };
       }
 
       case "clear": {
         await redisCommand("del", key);
-        return { jobIds: [] };
+        return { latestId: 0 };
       }
     }
   },

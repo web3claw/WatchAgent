@@ -118,22 +118,35 @@ export async function GET() {
     const jobs = parseJobs(text);
     if (jobs.length === 0) return NextResponse.json({ ok: false, error: "No jobs parsed" }, { status: 502 });
 
-    const seenData = await redisCommand("get", "yuanjisong:seen_jobs");
-    const seenIds: string[] = seenData.result ? typeof seenData.result === "string" ? JSON.parse(seenData.result) : seenData.result : [];
-    const newJobs = jobs.filter((j) => !seenIds.includes(j.id));
-    await redisCommand("set", "yuanjisong:seen_jobs", JSON.stringify(jobs.map((j) => j.id)));
+    const seenData = await redisCommand("get", "yuanjisong:latest_id");
+    const latestId = seenData.result ? Number(seenData.result) : 0;
+    const newJobs = jobs.filter((j) => Number(j.id) > latestId);
 
     if (newJobs.length === 0) return NextResponse.json({ ok: true, message: "No new jobs", totalJobs: jobs.length, newJobs: 0 });
 
     const results = [];
+    const succeededIds = new Set<number>();
     for (const job of newJobs) {
       try {
         const analysis = await analyzeJob(job);
         const msg = [`🆕 <b>${escapeHtml(job.title)}</b>`, `💰 ${escapeHtml(job.price || "面议")} | ⏱ ${escapeHtml(job.duration || "待定")}`, `📋 ${escapeHtml(job.type)} | 📍 ${escapeHtml(job.location || "未知")}`, ``, escapeHtml(analysis), ``, `🔗 ${job.url}`].join("\n");
         await sendTelegram(msg);
         results.push({ id: job.id, title: job.title, status: "sent" });
+        succeededIds.add(Number(job.id));
       } catch (err) { results.push({ id: job.id, title: job.title, status: "error", error: String(err) }); }
     }
+
+    let newLatestId = latestId;
+    for (const job of newJobs.sort((a, b) => Number(a.id) - Number(b.id))) {
+      if (!succeededIds.has(Number(job.id))) {
+        newLatestId = Number(job.id) - 1;
+        break;
+      }
+    }
+    if (newLatestId === latestId && newJobs.every((j) => succeededIds.has(Number(j.id)))) {
+      newLatestId = Number(newJobs[newJobs.length - 1].id);
+    }
+    await redisCommand("set", "yuanjisong:latest_id", String(newLatestId));
     return NextResponse.json({ ok: true, totalJobs: jobs.length, newJobs: newJobs.length, results });
   } catch (err) { return NextResponse.json({ ok: false, error: String(err) }, { status: 500 }); }
 }
