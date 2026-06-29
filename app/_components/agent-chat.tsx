@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
 import {
@@ -49,19 +49,19 @@ function saveSession(sessionId: string, state: { sessionId?: string; continuatio
   }
 }
 
-async function saveMessages(sessionId: string, messages: unknown[]) {
+async function saveEvents(sessionId: string, events: readonly unknown[]) {
   try {
     await fetch(`/api/sessions/${sessionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages: [...events] }),
     });
   } catch {
     // ignore
   }
 }
 
-async function loadMessages(sessionId: string): Promise<unknown[] | null> {
+async function loadEvents(sessionId: string): Promise<unknown[] | null> {
   try {
     const res = await fetch(`/api/sessions/${sessionId}`);
     const data = await res.json();
@@ -79,7 +79,22 @@ export function AgentChat({
   onSessionCreated: (sessionId: string) => void;
 }) {
   const registeredRef = useRef(false);
-  const savedMessagesRef = useRef(false);
+  const [initialEvents, setInitialEvents] = useState<readonly unknown[]>([]);
+  const [eventsLoaded, setEventsLoaded] = useState(false);
+
+  // Load saved events from Redis when restoring a session
+  useEffect(() => {
+    if (!activeSessionId) {
+      setInitialEvents([]);
+      setEventsLoaded(true);
+      return;
+    }
+    setEventsLoaded(false);
+    loadEvents(activeSessionId).then((events) => {
+      setInitialEvents(events || []);
+      setEventsLoaded(true);
+    });
+  }, [activeSessionId]);
 
   const getInitialSession = useCallback(() => {
     if (activeSessionId) {
@@ -97,6 +112,7 @@ export function AgentChat({
 
   const agent = useEveAgent({
     initialSession: getInitialSession(),
+    initialEvents: initialEvents as any,
     onSessionChange: (state) => {
       if (state.sessionId) {
         saveSession(state.sessionId, state);
@@ -125,22 +141,31 @@ export function AgentChat({
     }
   }, [agent.session, agent.data.messages.length]);
 
-  // Save messages to Redis when they change (debounced)
+  // Save events to Redis when they change (debounced)
   useEffect(() => {
     const sid = agent.session?.sessionId;
-    if (sid && agent.data.messages.length > 0) {
+    if (sid && agent.events.length > 0) {
       const timeout = setTimeout(() => {
-        saveMessages(sid, [...agent.data.messages]);
+        saveEvents(sid, agent.events);
       }, 1000);
       return () => clearTimeout(timeout);
     }
-  }, [agent.data.messages, agent.session?.sessionId]);
+  }, [agent.events, agent.session?.sessionId]);
 
   const handleSubmit = async (message: PromptInputMessage) => {
     const text = message.text.trim();
     if (!text || isBusy) return;
     await agent.send({ message: text });
   };
+
+  // Don't render until events are loaded for restored sessions
+  if (activeSessionId && !eventsLoaded) {
+    return (
+      <main className="flex h-full flex-col items-center justify-center bg-background text-foreground">
+        <div className="text-muted-foreground text-sm">加载会话中...</div>
+      </main>
+    );
+  }
 
   const composer = (
     <PromptInput onSubmit={handleSubmit}>
